@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CineVault — Movie Library</title>
+  <title>CineVault — Movies & TV Library</title>
   <style>
     /* ===== RESET & BASE ===== */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -521,6 +521,29 @@
 
     #modal-watch-btn:hover { background: var(--accent-hover); transform: scale(1.03); }
 
+    #tv-controls {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    #tv-controls label {
+      font-size: .82rem;
+      color: var(--text-muted);
+    }
+
+    .tv-input {
+      width: 76px;
+      padding: 8px 10px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: .88rem;
+    }
+
     /* ===== API KEY MODAL ===== */
     #apikey-overlay {
       position: fixed;
@@ -671,7 +694,7 @@
     <div id="logo">Cine<span>Vault</span></div>
 
     <form id="search-form" autocomplete="off">
-      <input id="search-input" type="search" placeholder="Search movies…" />
+      <input id="search-input" type="search" placeholder="Search movies or TV…" />
       <button id="search-btn" type="submit">Search</button>
     </form>
 
@@ -684,6 +707,9 @@
       <button class="tab-btn active" data-tab="trending">🔥 Trending</button>
       <button class="tab-btn" data-tab="popular">⭐ Popular</button>
       <button class="tab-btn" data-tab="toprated">🏆 Top Rated</button>
+      <button class="tab-btn" data-tab="tvtrending">📺 TV Trending</button>
+      <button class="tab-btn" data-tab="tvpopular">📡 TV Popular</button>
+      <button class="tab-btn" data-tab="tvtoprated">🎬 TV Top Rated</button>
       <button class="tab-btn" data-tab="search" id="search-tab" style="display:none;">🔍 Results</button>
     </div>
 
@@ -728,8 +754,14 @@
           <div id="modal-genres"></div>
           <button id="modal-watch-btn">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
-            Watch Trailer
+            Watch Now
           </button>
+          <div id="tv-controls">
+            <label for="season-input">Season</label>
+            <input id="season-input" class="tv-input" type="number" min="1" value="1" />
+            <label for="episode-input">Episode</label>
+            <input id="episode-input" class="tv-input" type="number" min="1" value="1" />
+          </div>
         </div>
       </div>
     </div>
@@ -761,7 +793,8 @@
     ============================================================ */
     const TMDB_BASE   = 'https://api.themoviedb.org/3';
     const IMG_BASE    = 'https://image.tmdb.org/t/p';
-    const EMBED_BASE  = 'https://www.vidking.net/embed/movie';
+    const EMBED_MOVIE_BASE = 'https://www.vidking.net/embed/movie';
+    const EMBED_TV_BASE    = 'https://www.vidking.net/embed/tv';
     const ACCENT_HEX  = '5865f2';
 
     const state = {
@@ -771,7 +804,8 @@
       page: 1,
       totalPages: 1,
       loading: false,
-      currentMovieId: null,
+      currentMediaId: null,
+      currentMediaType: 'movie',
     };
 
     /* ============================================================
@@ -800,6 +834,9 @@
     const modalOverview  = document.getElementById('modal-overview');
     const modalGenres    = document.getElementById('modal-genres');
     const modalWatchBtn  = document.getElementById('modal-watch-btn');
+    const tvControls     = document.getElementById('tv-controls');
+    const seasonInput    = document.getElementById('season-input');
+    const episodeInput   = document.getElementById('episode-input');
 
     const apikeyOverlay  = document.getElementById('apikey-overlay');
     const apikeyInput    = document.getElementById('apikey-input');
@@ -923,36 +960,54 @@
       return res.json();
     }
 
-    async function fetchMovies(tab, page = 1) {
-      if (tab === 'trending')  return tmdbFetch('/trending/movie/day', { page });
-      if (tab === 'popular')   return tmdbFetch('/movie/popular', { page });
-      if (tab === 'toprated')  return tmdbFetch('/movie/top_rated', { page });
-      if (tab === 'search')    return tmdbFetch('/search/movie', { query: state.query, page });
+    async function fetchMedia(tab, page = 1) {
+      if (tab === 'trending')   return tmdbFetch('/trending/movie/day', { page });
+      if (tab === 'popular')    return tmdbFetch('/movie/popular', { page });
+      if (tab === 'toprated')   return tmdbFetch('/movie/top_rated', { page });
+      if (tab === 'tvtrending') return tmdbFetch('/trending/tv/day', { page });
+      if (tab === 'tvpopular')  return tmdbFetch('/tv/popular', { page });
+      if (tab === 'tvtoprated') return tmdbFetch('/tv/top_rated', { page });
+      if (tab === 'search')     return tmdbFetch('/search/multi', { query: state.query, page });
       return null;
     }
 
-    async function fetchMovieDetails(id) {
-      return tmdbFetch(`/movie/${id}`);
+    async function fetchMediaDetails(id, type = 'movie') {
+      const endpoint = type === 'tv' ? `/tv/${id}` : `/movie/${id}`;
+      return tmdbFetch(endpoint);
     }
 
     /* ============================================================
        RENDER HELPERS
     ============================================================ */
-    function renderCard(movie) {
-      const poster = imgUrl(movie.poster_path, 'w342');
-      const year   = formatDate(movie.release_date);
-      const rating = formatRating(movie.vote_average);
+    function normalizeMedia(item, fallbackType = 'movie') {
+      return {
+        ...item,
+        media_type: item.media_type || fallbackType,
+        media_title: item.title || item.name || 'Untitled',
+        media_date: item.release_date || item.first_air_date || '',
+      };
+    }
+
+    function mediaTypeForTab(tab) {
+      return tab.startsWith('tv') ? 'tv' : 'movie';
+    }
+
+    function renderCard(media) {
+      const poster = imgUrl(media.poster_path, 'w342');
+      const year   = formatDate(media.media_date);
+      const rating = formatRating(media.vote_average);
+      const title  = media.media_title;
 
       const card = document.createElement('div');
       card.className = 'movie-card';
       card.setAttribute('role', 'button');
       card.setAttribute('tabindex', '0');
-      card.setAttribute('aria-label', `${movie.title} (${year})`);
+      card.setAttribute('aria-label', `${title} (${year})`);
 
       card.innerHTML = `
         <div class="poster-wrap">
           ${poster
-            ? `<img src="${escHtml(poster)}" alt="${escHtml(movie.title)} poster" loading="lazy" />`
+            ? `<img src="${escHtml(poster)}" alt="${escHtml(title)} poster" loading="lazy" />`
             : `<div class="no-poster">🎬</div>`
           }
           <div class="play-overlay">
@@ -962,7 +1017,7 @@
           </div>
         </div>
         <div class="card-info">
-          <p class="card-title">${escHtml(movie.title)}</p>
+          <p class="card-title">${escHtml(title)}</p>
           <div class="card-meta">
             <div class="rating">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
@@ -973,7 +1028,7 @@
         </div>
       `;
 
-      const open = () => openMovieModal(movie.id);
+      const open = () => openMediaModal(media.id, media.media_type);
       card.addEventListener('click', open);
       card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
 
@@ -1029,6 +1084,9 @@
       trending: 'Trending Today',
       popular:  'Popular Movies',
       toprated: 'Top Rated Movies',
+      tvtrending: 'Trending TV Series',
+      tvpopular: 'Popular TV Series',
+      tvtoprated: 'Top Rated TV Series',
       search:   'Search Results',
     };
 
@@ -1046,10 +1104,13 @@
         : TITLES[tab];
 
       try {
-        const data = await fetchMovies(tab, state.page);
+        const data = await fetchMedia(tab, state.page);
         if (!data) { renderNoKey(); state.loading = false; return; }
 
-        const movies = data.results || [];
+        const rawItems = data.results || [];
+        const items = rawItems
+          .filter(i => tab !== 'search' || i.media_type === 'movie' || i.media_type === 'tv')
+          .map(i => normalizeMedia(i, tab === 'search' ? 'movie' : mediaTypeForTab(tab)));
         state.totalPages = data.total_pages || 1;
 
         if (tab === 'search') {
@@ -1062,14 +1123,14 @@
 
         if (reset) grid.innerHTML = '';
 
-        if (movies.length === 0 && reset) {
+        if (items.length === 0 && reset) {
           renderEmpty(tab === 'search' ? `No results for "${state.query}".` : 'Nothing to show right now.');
           state.loading = false;
           return;
         }
 
         const frag = document.createDocumentFragment();
-        movies.forEach(m => frag.appendChild(renderCard(m)));
+        items.forEach(m => frag.appendChild(renderCard(m)));
         grid.appendChild(frag);
 
         loadMoreWrap.style.display = state.page < state.totalPages ? '' : 'none';
@@ -1122,8 +1183,13 @@
     /* ============================================================
        MOVIE DETAIL MODAL
     ============================================================ */
-    async function openMovieModal(id) {
-      state.currentMovieId = id;
+    async function openMediaModal(id, type = 'movie') {
+      state.currentMediaId = id;
+      state.currentMediaType = type;
+      tvControls.style.display = type === 'tv' ? 'flex' : 'none';
+      modalWatchBtn.innerHTML = type === 'tv'
+        ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Watch Episode'
+        : '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Watch Trailer';
 
       // Reset hero to poster view
       resetModalHero();
@@ -1134,42 +1200,55 @@
       modalMeta.innerHTML = '';
       modalOverview.textContent = '';
       modalGenres.innerHTML = '';
+      seasonInput.value = '1';
+      episodeInput.value = '1';
       modalPosterImg.src = '';
       modalHeroPoster.src = '';
       modalOverlay.classList.add('open');
       document.body.style.overflow = 'hidden';
 
       try {
-        const movie = await fetchMovieDetails(id);
-        if (!movie) return;
+        const media = await fetchMediaDetails(id, type);
+        if (!media) return;
+
+        const mediaTitle = media.title || media.name || 'Untitled';
 
         // Hero backdrop
-        const backdrop = imgUrl(movie.backdrop_path, 'w1280');
-        if (backdrop) { modalHeroPoster.src = backdrop; modalHeroPoster.alt = movie.title; }
+        const backdrop = imgUrl(media.backdrop_path, 'w1280');
+        if (backdrop) { modalHeroPoster.src = backdrop; modalHeroPoster.alt = mediaTitle; }
 
         // Side poster
-        const poster = imgUrl(movie.poster_path, 'w342');
-        if (poster) { modalPosterImg.src = poster; modalPosterImg.alt = movie.title + ' poster'; }
+        const poster = imgUrl(media.poster_path, 'w342');
+        if (poster) { modalPosterImg.src = poster; modalPosterImg.alt = mediaTitle + ' poster'; }
 
         // Info
-        modalTitle.textContent = movie.title || 'Untitled';
-        modalTagline.textContent = movie.tagline || '';
-        modalTagline.style.display = movie.tagline ? '' : 'none';
+        modalTitle.textContent = mediaTitle;
+        modalTagline.textContent = media.tagline || '';
+        modalTagline.style.display = media.tagline ? '' : 'none';
 
-        const year    = formatDate(movie.release_date);
-        const rating  = formatRating(movie.vote_average);
-        const runtime = movie.runtime ? `${movie.runtime} min` : null;
+        const dateValue = media.release_date || media.first_air_date;
+        const year    = formatDate(dateValue);
+        const rating  = formatRating(media.vote_average);
+        const runtime = media.runtime
+          ? `${media.runtime} min`
+          : (Array.isArray(media.episode_run_time) && media.episode_run_time[0]
+            ? `${media.episode_run_time[0]} min/ep`
+            : null);
+
+        const seasonCount = media.number_of_seasons || 1;
+        seasonInput.max = String(Math.max(1, seasonCount));
 
         modalMeta.innerHTML = [
           `<span class="meta-pill accent">⭐ ${escHtml(rating)}</span>`,
           year !== '—' ? `<span class="meta-pill">📅 ${escHtml(String(year))}</span>` : '',
           runtime       ? `<span class="meta-pill">⏱ ${escHtml(runtime)}</span>` : '',
-          movie.status  ? `<span class="meta-pill">${escHtml(movie.status)}</span>` : '',
+          media.status  ? `<span class="meta-pill">${escHtml(media.status)}</span>` : '',
+          type === 'tv' ? `<span class="meta-pill">📺 ${escHtml(String(seasonCount))} seasons</span>` : '',
         ].filter(Boolean).join('');
 
-        modalOverview.textContent = movie.overview || 'No overview available.';
+        modalOverview.textContent = media.overview || 'No overview available.';
 
-        const genres = (movie.genres || []).map(g => `<span class="genre-tag">${escHtml(g.name)}</span>`).join('');
+        const genres = (media.genres || []).map(g => `<span class="genre-tag">${escHtml(g.name)}</span>`).join('');
         modalGenres.innerHTML = genres;
 
       } catch {
@@ -1186,8 +1265,12 @@
     }
 
     function loadTrailerEmbed() {
-      const id = state.currentMovieId;
+      const id = state.currentMediaId;
       if (!id) return;
+
+      const mediaType = state.currentMediaType || 'movie';
+      const season = Math.max(1, parseInt(seasonInput.value, 10) || 1);
+      const episode = Math.max(1, parseInt(episodeInput.value, 10) || 1);
 
       // Hide poster + play button
       modalHeroPoster.style.display = 'none';
@@ -1199,10 +1282,14 @@
 
       // Create iframe
       const iframe = document.createElement('iframe');
-      iframe.src = `${EMBED_BASE}/${id}?color=${ACCENT_HEX}`;
+      iframe.src = mediaType === 'tv'
+        ? `${EMBED_TV_BASE}/${id}/${season}/${episode}?color=${ACCENT_HEX}`
+        : `${EMBED_MOVIE_BASE}/${id}?color=${ACCENT_HEX}`;
       iframe.setAttribute('allowfullscreen', '');
+      iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation');
+      iframe.setAttribute('referrerpolicy', 'no-referrer');
       iframe.allow = 'autoplay; fullscreen; picture-in-picture';
-      iframe.title = 'Movie trailer';
+      iframe.title = mediaType === 'tv' ? 'TV episode player' : 'Movie trailer';
       modalHero.appendChild(iframe);
     }
 
