@@ -1286,7 +1286,6 @@
         ? `${EMBED_TV_BASE}/${id}/${season}/${episode}?color=${ACCENT_HEX}`
         : `${EMBED_MOVIE_BASE}/${id}?color=${ACCENT_HEX}`;
       iframe.setAttribute('allowfullscreen', '');
-      iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation');
       iframe.setAttribute('referrerpolicy', 'no-referrer');
       iframe.allow = 'autoplay; fullscreen; picture-in-picture';
       iframe.title = mediaType === 'tv' ? 'TV episode player' : 'Movie trailer';
